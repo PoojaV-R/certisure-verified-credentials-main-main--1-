@@ -8,10 +8,10 @@ const QRCode = require('qrcode');
 const Tesseract = require('tesseract.js');
 
 const app = express();
-const PORT = 5000;
+const PORT = process.env.PORT || 5000;
 
 // ─── Middleware ───────────────────────────────────────────────────────────────
-app.use(cors({ origin: 'http://localhost:5173', credentials: true }));
+app.use(cors({ origin: true, credentials: true }));
 app.use(express.json());
 
 // Prevent Tesseract worker crashes from taking down the backend
@@ -30,7 +30,7 @@ if (!fs.existsSync(UPLOADS_DIR)) fs.mkdirSync(UPLOADS_DIR, { recursive: true });
 app.use('/uploads', express.static(UPLOADS_DIR));
 
 // ─── Multer configuration ─────────────────────────────────────────────────────
-const storage = multer.diskStorage({
+const storage = process.env.VERCEL ? multer.memoryStorage() : multer.diskStorage({
   destination: (_req, _file, cb) => cb(null, UPLOADS_DIR),
   filename: (_req, file, cb) => {
     const unique = `${Date.now()}-${uuidv4()}${path.extname(file.originalname)}`;
@@ -136,13 +136,21 @@ app.post('/api/upload', upload.single('certificate'), async (req, res) => {
       return res.status(400).json({ success: false, error: 'No file uploaded.' });
     }
 
-    const filePath = req.file.path;
-    const fileUrl = `http://localhost:${PORT}/uploads/${req.file.filename}`;
+    const isVercel = !!process.env.VERCEL;
+    const host = req.headers.host;
+    const protocol = req.headers['x-forwarded-proto'] || 'http';
+    const baseUrl = isVercel ? `${protocol}://${host}` : `http://localhost:${PORT}`;
+    const frontendUrl = isVercel ? `${protocol}://${host}` : 'http://localhost:5173';
+
+    // If using memoryStorage in Vercel, req.file.buffer is used.
+    // We cannot serve it from /uploads easily directly without saving, so we encode it as base64 for the fileUrl or just ignore fileUrl display on Vercel.
+    const fileUrl = isVercel ? `data:${req.file.mimetype};base64,${req.file.buffer.toString('base64')}` : `${baseUrl}/uploads/${req.file.filename}`;
 
     // ── OCR ──────────────────────────────────────────────────────────────────
     let extractedText = '';
     try {
-      const ocrResult = await Tesseract.recognize(filePath, 'eng', {
+      const ocrInput = isVercel ? req.file.buffer : req.file.path;
+      const ocrResult = await Tesseract.recognize(ocrInput, 'eng', {
         logger: (m) => console.log(m), // Log progress so we don't think it hangs
         langPath: 'https://tessdata.projectnaptha.com/4.0.0',
       });
@@ -158,7 +166,7 @@ app.post('/api/upload', upload.single('certificate'), async (req, res) => {
 
     // ── Certificate ID & QR ───────────────────────────────────────────────────
     const certificate_id = uuidv4();
-    const verifyUrl = `http://localhost:5173/verify/${certificate_id}`;
+    const verifyUrl = `${frontendUrl}/verify/${certificate_id}`;
     const qr_base64 = await QRCode.toDataURL(verifyUrl, {
       width: 300,
       color: {
@@ -173,7 +181,7 @@ app.post('/api/upload', upload.single('certificate'), async (req, res) => {
       text: extractedText,
       verified,
       confidence,
-      filePath,
+      filePath: isVercel ? 'memory' : req.file.path,
       fileUrl,
       reasons,
       createdAt: new Date().toISOString(),
@@ -218,8 +226,12 @@ app.use((err, _req, res, _next) => {
 });
 
 // ─── Start server ─────────────────────────────────────────────────────────────
-app.listen(PORT, () => {
-  console.log(`\n🚀 CertiSure backend running on http://localhost:${PORT}`);
-  console.log(`   POST /api/upload   — Verify a certificate`);
-  console.log(`   GET  /api/verify/:id — Lookup by ID\n`);
-});
+if (process.env.VERCEL) {
+  module.exports = app;
+} else {
+  app.listen(PORT, () => {
+    console.log(`\n🚀 CertiSure backend running on http://localhost:${PORT}`);
+    console.log(`   POST /api/upload   — Verify a certificate`);
+    console.log(`   GET  /api/verify/:id — Lookup by ID\n`);
+  });
+}
