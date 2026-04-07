@@ -4,7 +4,7 @@ import axios from 'axios';
 import toast from 'react-hot-toast';
 import { Html5QrcodeScanner, Html5Qrcode } from 'html5-qrcode';
 
-const API_URL = import.meta.env.VITE_API_URL || 'http://localhost:5000';
+const API_URL = import.meta.env.VITE_API_URL || (import.meta.env.PROD ? '' : 'http://localhost:5000');
 
 export default function ScanPage() {
     const [mode, setMode] = useState('webcam'); // 'webcam' | 'image'
