@@ -64,7 +64,8 @@ export default function UploadPage() {
             const data = res.data;
             if (data.success) {
                 toast.success('Certificate analyzed successfully!');
-                navigate(`/result/${data.certificate_id}`, { state: data });
+                const { file_url, ...safeState } = data;
+                navigate(`/result/${data.certificate_id}`, { state: safeState });
             } else {
                 toast.error(data.error || 'Verification failed.');
             }
